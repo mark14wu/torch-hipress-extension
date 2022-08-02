@@ -17,6 +17,7 @@
 #include "./ZQ_CPP_LIB/gradient_compression_body/terngrad_body.h"
 #include "./ZQ_CPP_LIB/gradient_compression_body/tbq_body.h"
 #include "./ZQ_CPP_LIB/gradient_compression_body/gd_body.h"
+#include "./ZQ_CPP_LIB/gradient_compression_body/powersgd_body.h"
 #include "./ZQ_CPP_LIB/likely.h"
 
 #include <c10/cuda/CUDAStream.h>
@@ -196,7 +197,6 @@ void hp_cuda_tbqr(
   cudaStreamSynchronize(PVOID2CUDASTREAM(stream));
 }
 
-
 void hp_cuda_terngradr(
   std::vector<float*>& out_floats,
   std::vector<int32_t>& out_float_sizes,
@@ -229,5 +229,74 @@ void hp_cuda_terngradr(
   if (ret) printf("ret=%d\n", ret);
 }
 
+void hp_cuda_powersgd_encode1(
+  std::vector<std::shared_ptr<torch::Tensor>>& grads,
+  std::vector<std::shared_ptr<torch::Tensor>>& residuals,
+  std::vector<std::shared_ptr<torch::Tensor>>& Qs,
+  std::vector<std::shared_ptr<torch::Tensor>>& Ms,
+  std::vector<std::shared_ptr<torch::Tensor>>& Ps,
+  cudaStream_t stream
+) {
+  auto policy = zq_cpp_lib::operate_memory::get_policy<thrust::cuda_cub::par_t::stream_attachment_type>::get(stream);
+  for (uint i = 0; i < grads.size(); i++) {
+    int ret = zq_cpp_lib::gradient_compression_body::powersgd_encode1_body<thrust::cuda_cub::par_t::stream_attachment_type>(
+      *grads[i],
+      *residuals[i],
+      *Qs[i],
+      *Ms[i],
+      *Ps[i],
+      policy,
+      stream
+    );
+    if (unlikely(ret)) {
+      std::cout << "Call powersgd encode1 failed, ret = " << ret << "." << std::endl;
+    }
+  }
+}
 
+void hp_cuda_powersgd_encode2(
+  std::vector<std::shared_ptr<torch::Tensor>>& Ps,
+  std::vector<std::shared_ptr<torch::Tensor>>& Ms,
+  std::vector<std::shared_ptr<torch::Tensor>>& Qs,
+  cudaStream_t stream
+) {
+  auto policy = zq_cpp_lib::operate_memory::get_policy<thrust::cuda_cub::par_t::stream_attachment_type>::get(stream);
+  for (uint i = 0; i < Ps.size(); i++) {
+    int ret = zq_cpp_lib::gradient_compression_body::powersgd_encode2_body<thrust::cuda_cub::par_t::stream_attachment_type>(
+      *Ps[i],
+      *Ms[i],
+      *Qs[i],
+      policy,
+      stream
+    );
+    if (unlikely(ret)) {
+      std::cout << "Call powersgd encode1 failed, ret = " << ret << "." << std::endl;
+    }
+  }
+}
+
+void hp_cuda_powersgd_decode(
+  std::vector<std::shared_ptr<torch::Tensor>>& Ps,
+  std::vector<std::shared_ptr<torch::Tensor>>& Qs,
+  std::vector<std::shared_ptr<torch::Tensor>>& Ms,
+  std::vector<std::shared_ptr<torch::Tensor>>& residuals,
+  std::vector<std::shared_ptr<torch::Tensor>>& grads,
+  cudaStream_t stream
+) {
+  auto policy = zq_cpp_lib::operate_memory::get_policy<thrust::cuda_cub::par_t::stream_attachment_type>::get(stream);
+  for (uint i = 0; i < Ps.size(); i++) {
+    int ret = zq_cpp_lib::gradient_compression_body::powersgd_decode_body<thrust::cuda_cub::par_t::stream_attachment_type>(
+      *Ps[i],
+      *Qs[i],
+      *Ms[i],
+      *residuals[i],
+      *grads[i],
+      policy,
+      stream
+    );
+    if (unlikely(ret)) {
+      std::cout << "Call powersgd encode1 failed, ret = " << ret << "." << std::endl;
+    }
+  }
+}
 

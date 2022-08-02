@@ -21,6 +21,9 @@
 #define COMP_TASK 10
 #define DECOMP_TASK 20
 #define ROOT_DECOMP_COMP_TASK 30
+#define POWERSGD_ENCODE1 40
+#define POWERSGD_ENCODE2 50
+#define POWERSGD_DECODE 60
 #define BACK_THREAD_ 5
 struct Task
 {
@@ -33,6 +36,10 @@ struct Task
     std::shared_ptr<torch::Tensor> B;
     //on cpu
     std::shared_ptr<torch::Tensor> C;
+    //for powersgd
+    std::shared_ptr<torch::Tensor> M;
+    std::shared_ptr<torch::Tensor> P;
+    std::shared_ptr<torch::Tensor> Q;
     //is root
     // 1 is root
     // 0 is ~root
@@ -53,6 +60,8 @@ struct CompAlg {
   //for graddrop
   double sample_rate;
   double drop_ratio;
+  //for powersgd
+  int matrix_approximation_rank;
 };
 
 class TaskQueue {

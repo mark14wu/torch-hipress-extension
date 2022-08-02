@@ -14,7 +14,7 @@ static TensorMap temp_cuda_tensors_for_c;
 
 
 // CUDA  declarations
-//terngrad
+// terngrad
 void hp_cuda_terngrad(
   std::vector<float*>& in_floats,
   std::vector<int32_t>& in_float_sizes,
@@ -34,7 +34,7 @@ void hp_cuda_terngradr(
   cudaStream_t stream
 );
 
-//tbq
+// tbq
 void hp_cuda_tbqr(
   std::vector<float*>& out_floats,
   std::vector<int32_t>& out_float_sizes,
@@ -56,6 +56,7 @@ void hp_cuda_tbq(
   cudaStream_t stream
 );
 
+// grad drop
 void hp_cuda_gd(
   std::vector<float*>& in_floats,
   std::vector<int32_t>& Ns,
@@ -73,6 +74,30 @@ void hp_cuda_gdr(
   std::vector<float*>& out_floats,
   std::vector<int32_t>& out_float_sizes,
   std::vector<int>& is_add_tos,
+  cudaStream_t stream
+);
+
+// powersgd
+void hp_cuda_powersgd_encode1(
+  std::vector<std::shared_ptr<torch::Tensor>>& grads,
+  std::vector<std::shared_ptr<torch::Tensor>>& residuals,
+  std::vector<std::shared_ptr<torch::Tensor>>& Qs,
+  std::vector<std::shared_ptr<torch::Tensor>>& Ms,
+  std::vector<std::shared_ptr<torch::Tensor>>& Ps,
+  cudaStream_t stream
+);
+void hp_cuda_powersgd_encode2(
+  std::vector<std::shared_ptr<torch::Tensor>>& Ps,
+  std::vector<std::shared_ptr<torch::Tensor>>& Ms,
+  std::vector<std::shared_ptr<torch::Tensor>>& Qs,
+  cudaStream_t stream
+);
+void hp_cuda_powersgd_decode(
+  std::vector<std::shared_ptr<torch::Tensor>>& Ps,
+  std::vector<std::shared_ptr<torch::Tensor>>& Qs,
+  std::vector<std::shared_ptr<torch::Tensor>>& Ms,
+  std::vector<std::shared_ptr<torch::Tensor>>& residuals,
+  std::vector<std::shared_ptr<torch::Tensor>>& grads,
   cudaStream_t stream
 );
 
@@ -612,6 +637,140 @@ bool RunLoopOnceForTBQ(
   return true;
 }
 
+bool RunLoopOnceForPowerSGD(
+  GlobalStatus& state, 
+  ThreadManager& manager, 
+  FinishedQueues &fq,
+  c10::cuda::CUDAStream& data_stream,
+  c10::cuda::CUDAStream& compute_stream
+){
+  if (manager.shut_down_) {
+    return false;
+  }
+   
+  auto start_time = std::chrono::steady_clock::now();
+  auto sleep_duration = manager.thread_last_cycle_start_ +
+                        std::chrono::microseconds(long(
+                           500.)) -
+                        start_time;
+  if (sleep_duration > std::chrono::steady_clock::duration::zero()) {
+    std::this_thread::sleep_for(sleep_duration);
+  }
+  manager.thread_last_cycle_start_ = std::chrono::steady_clock::now();
+  
+  auto task_list = manager.task_queue_.GetTasksFromQueue();
+  //no task find
+  if(task_list.size() == 0){
+    return true;
+  }
+
+  std::vector<Task> encode1_task;
+  std::vector<Task> encode2_task;
+  std::vector<Task> decode_task;
+
+  // encode1 params
+  std::vector<std::shared_ptr<torch::Tensor>> encode1_input_grads;
+  std::vector<std::shared_ptr<torch::Tensor>> encode1_input_residuals;
+  std::vector<std::shared_ptr<torch::Tensor>> encode1_input_Qs;
+  std::vector<std::shared_ptr<torch::Tensor>> encode1_output_Ms;
+  std::vector<std::shared_ptr<torch::Tensor>> encode1_output_Ps;
+
+  // encode2 params
+  std::vector<std::shared_ptr<torch::Tensor>> encode2_input_Ps;
+  std::vector<std::shared_ptr<torch::Tensor>> encode2_input_Ms;
+  std::vector<std::shared_ptr<torch::Tensor>> encode2_output_Qs;
+
+  // decode params
+  std::vector<std::shared_ptr<torch::Tensor>> decode_input_Ps;
+  std::vector<std::shared_ptr<torch::Tensor>> decode_input_Qs;
+  std::vector<std::shared_ptr<torch::Tensor>> decode_output_Ms;
+  std::vector<std::shared_ptr<torch::Tensor>> decode_output_residuals;
+  std::vector<std::shared_ptr<torch::Tensor>> decode_output_grads;
+
+  for (auto t: task_list) {
+    switch (t.task_id)
+    {
+    case POWERSGD_ENCODE1:
+      // std::cout << "received encode1 task! " << t.tensor_name << std::endl;
+      encode1_input_grads.push_back(t.tensor);
+      encode1_input_residuals.push_back(t.residual);
+      encode1_input_Qs.push_back(t.Q);
+      encode1_output_Ms.push_back(t.M);
+      encode1_output_Ps.push_back(t.P);
+      encode1_task.push_back(t);
+      break;
+
+    case POWERSGD_ENCODE2:
+      // std::cout << "received encode2 task! " << t.tensor_name << std::endl;
+      encode2_input_Ps.push_back(t.P);
+      encode2_input_Ms.push_back(t.M);
+      encode2_output_Qs.push_back(t.Q);
+      encode2_task.push_back(t);
+      break;
+
+    case POWERSGD_DECODE:
+      // std::cout << "received decode task! " << t.tensor_name << std::endl;
+      decode_input_Ps.push_back(t.P);
+      decode_input_Qs.push_back(t.Q);
+      decode_output_Ms.push_back(t.M);
+      decode_output_residuals.push_back(t.residual);
+      decode_output_grads.push_back(t.tensor);
+      decode_task.push_back(t);
+      break;
+
+    default:
+      std::cout << "error find task_id != 40 50 60 where task_id is " << t.task_id <<  std::endl;
+      break;
+    }
+  }
+
+  data_stream.synchronize();
+
+  hp_cuda_powersgd_encode1(
+    encode1_input_grads,
+    encode1_input_residuals,
+    encode1_input_Qs,
+    encode1_output_Ms,
+    encode1_output_Ps,
+    compute_stream
+  );
+
+  hp_cuda_powersgd_encode2(
+    encode2_input_Ps,
+    encode2_input_Ms,
+    encode2_output_Qs,
+    compute_stream
+  );
+
+  hp_cuda_powersgd_decode(
+    decode_input_Ps,
+    decode_input_Qs,
+    decode_output_Ms,
+    decode_output_residuals,
+    decode_output_grads,
+    compute_stream
+  );
+
+  data_stream.synchronize();
+
+  for(Task t : decode_task){
+    // std::cout << "finished decode " << t.tensor_name << std::endl;
+    fq.finished_queue_for_DECOMP_TASK_.PushFTKToFQ(t.tensor_name);
+  }
+
+  for(Task t : encode1_task){
+    // std::cout << "finished encode1 " << t.tensor_name << std::endl;
+    fq.finished_queue_for_COMP_TASK_.PushFTKToFQ(t.tensor_name);
+  }
+
+  for(Task t : encode2_task){
+    // std::cout << "finished encode2 " << t.tensor_name << std::endl;
+    fq.finished_queue_for_ROOT_DECOMP_COMP_TASK_.PushFTKToFQ(t.tensor_name);
+  }
+
+  return true;
+}
+
 
 //task_id = 1 for comp; task_id = 2 for decomp;
 void BackgroundThreadLoop(GlobalStatus& state, ThreadManager& manager, FinishedQueues &fq, int32_t device_id){
@@ -636,6 +795,8 @@ void BackgroundThreadLoop(GlobalStatus& state, ThreadManager& manager, FinishedQ
     loop_function = RunLoopOnceForTerngrad;
   } else if (state.comp_alg_.CompAlgName == "graddrop") {
     loop_function = RunLoopOnceForGradDrop;
+  } else if (state.comp_alg_.CompAlgName == "powersgd") {
+    loop_function = RunLoopOnceForPowerSGD;
   } else {
     loop_function = RunLoopOnceForTBQ;
   }
@@ -685,8 +846,11 @@ bool init(
     global_status.comp_alg_.CompAlgName = alg_name_;
     global_status.comp_alg_.drop_ratio = alg_paras["drop_ratio"];
     global_status.comp_alg_.sample_rate = alg_paras["sample_rate"];
+  } else if (alg_name_ == "powersgd"){
+    global_status.comp_alg_.CompAlgName = alg_name_;
+    global_status.comp_alg_.matrix_approximation_rank = alg_paras["matrix_approximation_rank"];
   } else {
-    std::cout << "only support terngrad, tbq and graddrop now" << std::endl;
+    std::cout << "only support terngrad, tbq, graddrop and powersgd now" << std::endl;
     return false;
   }
 
@@ -840,19 +1004,53 @@ bool submit_task_without_residual(
   return true;
 }
 
+bool submit_task_for_powersgd(
+  std::string tensor_name,
+  torch::Tensor tensor,
+  torch::Tensor residual,
+  torch::Tensor M,
+  torch::Tensor P,
+  torch::Tensor Q,
+  int task_id
+) {
+  CHECK_CUDA_INPUT(tensor);
+  CHECK_CUDA_INPUT(residual);
+  CHECK_CUDA_INPUT(M);
+  CHECK_CUDA_INPUT(P);
+  CHECK_CUDA_INPUT(Q);
+
+  if(task_id != POWERSGD_ENCODE1 && task_id != POWERSGD_ENCODE2 && task_id != POWERSGD_DECODE){
+    std::cout << "'submit_task' : powersgd task_id should be 40 (encode1) or 50 (encode2) or 60 (decode), find task_id is " << task_id << std::endl;
+    return false;
+  }
+
+  Task t;
+  t.tensor_name = tensor_name;
+  t.tensor = std::make_shared<torch::Tensor>(tensor);
+  t.residual = std::make_shared<torch::Tensor>(residual);
+  t.M = std::make_shared<torch::Tensor>(M);
+  t.P = std::make_shared<torch::Tensor>(P);
+  t.Q = std::make_shared<torch::Tensor>(Q);
+  t.task_id = task_id;
+
+  check_thread(); 
+  submit_task(t);
+  return true;
+}
+
 std::vector<std::string> getResults(int task_id){
   std::vector<std::string> result;
   switch (task_id)
   {
-  case COMP_TASK:
+  case COMP_TASK: case POWERSGD_ENCODE1:
     result = finished_queues_.finished_queue_for_COMP_TASK_.GetFTKsFromFQ();
     break;
   
-  case DECOMP_TASK:
+  case DECOMP_TASK: case POWERSGD_DECODE:
     result = finished_queues_.finished_queue_for_DECOMP_TASK_.GetFTKsFromFQ();
     break;
 
-  case ROOT_DECOMP_COMP_TASK:
+  case ROOT_DECOMP_COMP_TASK: case POWERSGD_ENCODE2:
     result = finished_queues_.finished_queue_for_ROOT_DECOMP_COMP_TASK_.GetFTKsFromFQ();
     break;
 
@@ -879,4 +1077,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.def("getResults",  &getResults, "getResults");
   m.def("submit_task",  &submit_task_without_residual, "submit_task without residual");
   m.def("submit_task",  &submit_task_with_residual, "submit_task with residual");
+  m.def("submit_task",  &submit_task_for_powersgd, "submit_task for powersgd");
 }

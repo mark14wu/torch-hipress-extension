@@ -25,7 +25,8 @@ int powersgd_encode1_body(
     (grad.view(-1) + residual).copy_(M.view(-1).slice(0, 0, N));
     // zt.record("M[:N] = Grad + Residual");
 
-    torch::mm_out(P, M, Q);
+    // torch::mm_out(P, M, Q);
+    torch::mm(M, Q).copy_(P);
     // zt.record("P = M * Q");
     return 0;
 }
@@ -49,7 +50,8 @@ int powersgd_encode2_body(
     // std::tie(P, std::ignore) = torch::qr(P);
     // std::tie(P, std::ignore) = torch::linalg::qr(P);
 
-    torch::mm_out(Q, M.t(), P);
+    // torch::mm_out(Q, M.t(), P);
+    torch::mm(M.t(), P).copy_(Q);
     // zt.record("Q = M^T * P");
     return 0;
 }
@@ -68,7 +70,8 @@ int powersgd_decode_body(
     // output: M, Residual, Grad
     int64_t N = grad.numel();
 
-    torch::mm_out(M, P, Q.t());
+    // torch::mm_out(M, P, Q.t());
+    torch::mm(P, Q.t()).copy_(M);
     // zt.record("M = P * Q^T");
 
     (grad.view(-1) - M.view(-1).slice(0, 0, N)).copy_(residual);

@@ -235,7 +235,7 @@ void hp_cuda_powersgd_encode1(
   std::vector<std::shared_ptr<torch::Tensor>>& Qs,
   std::vector<std::shared_ptr<torch::Tensor>>& Ms,
   std::vector<std::shared_ptr<torch::Tensor>>& Ps,
-  cudaStream_t stream
+  c10::cuda::CUDAStream& stream
 ) {
   auto policy = zq_cpp_lib::operate_memory::get_policy<thrust::cuda_cub::par_t::stream_attachment_type>::get(stream);
   for (uint i = 0; i < grads.size(); i++) {
@@ -258,7 +258,7 @@ void hp_cuda_powersgd_encode2(
   std::vector<std::shared_ptr<torch::Tensor>>& Ps,
   std::vector<std::shared_ptr<torch::Tensor>>& Ms,
   std::vector<std::shared_ptr<torch::Tensor>>& Qs,
-  cudaStream_t stream
+  c10::cuda::CUDAStream& stream
 ) {
   auto policy = zq_cpp_lib::operate_memory::get_policy<thrust::cuda_cub::par_t::stream_attachment_type>::get(stream);
   for (uint i = 0; i < Ps.size(); i++) {
@@ -281,7 +281,7 @@ void hp_cuda_powersgd_decode(
   std::vector<std::shared_ptr<torch::Tensor>>& Ms,
   std::vector<std::shared_ptr<torch::Tensor>>& residuals,
   std::vector<std::shared_ptr<torch::Tensor>>& grads,
-  cudaStream_t stream
+  c10::cuda::CUDAStream& stream
 ) {
   auto policy = zq_cpp_lib::operate_memory::get_policy<thrust::cuda_cub::par_t::stream_attachment_type>::get(stream);
   for (uint i = 0; i < Ps.size(); i++) {

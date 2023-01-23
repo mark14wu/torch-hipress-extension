@@ -84,13 +84,13 @@ void hp_cuda_powersgd_encode1(
   std::vector<std::shared_ptr<torch::Tensor>>& Qs,
   std::vector<std::shared_ptr<torch::Tensor>>& Ms,
   std::vector<std::shared_ptr<torch::Tensor>>& Ps,
-  cudaStream_t stream
+  c10::cuda::CUDAStream& stream
 );
 void hp_cuda_powersgd_encode2(
   std::vector<std::shared_ptr<torch::Tensor>>& Ps,
   std::vector<std::shared_ptr<torch::Tensor>>& Ms,
   std::vector<std::shared_ptr<torch::Tensor>>& Qs,
-  cudaStream_t stream
+  c10::cuda::CUDAStream& stream
 );
 void hp_cuda_powersgd_decode(
   std::vector<std::shared_ptr<torch::Tensor>>& Ps,
@@ -98,7 +98,7 @@ void hp_cuda_powersgd_decode(
   std::vector<std::shared_ptr<torch::Tensor>>& Ms,
   std::vector<std::shared_ptr<torch::Tensor>>& residuals,
   std::vector<std::shared_ptr<torch::Tensor>>& grads,
-  cudaStream_t stream
+  c10::cuda::CUDAStream& stream
 );
 
 
@@ -781,7 +781,6 @@ void BackgroundThreadLoop(GlobalStatus& state, ThreadManager& manager, FinishedQ
   
   auto stream = c10::cuda::getStreamFromPool(true, device.index());
   
-  std::cout << cudaStream_t(stream) << std::endl;
   c10::cuda::OptionalCUDAStreamGuard s;
   s.reset_stream(c10::cuda::CUDAStream(stream));
   
